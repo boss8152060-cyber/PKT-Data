@@ -19,9 +19,9 @@ from tkinter import filedialog, messagebox, ttk
 
 import yaml
 
-from pk_studio.core.dataset import DatasetScanner
+from pk_studio.core.dataset import DatasetScanner, flat_name
 from pk_studio.core.fileio import atomic_write_text
-from pk_studio.core.job_manager import JobManager
+from pk_studio.core.job_manager import JobManager, ui_queue_for
 from pk_studio.core.smart_curator import CuratorWeights, class_rarity
 
 
@@ -157,7 +157,7 @@ class CuratorPanel(ttk.Frame):
         source_folder = self.source_folder.get()
         self._active_job = self._job_manager.start(
             lambda cancel: self._scan_job(cancel, model_path, source_folder),
-            ui_call=self.after,
+            ui_call=ui_queue_for(self).call,
         )
 
     @staticmethod
@@ -282,7 +282,7 @@ class CuratorPanel(ttk.Frame):
         output_folder = self.output_folder.get()
         self._active_job = self._job_manager.start(
             lambda cancel: self._run_job(cancel, target_counts_snapshot, output_folder),
-            ui_call=self.after,
+            ui_call=ui_queue_for(self).call,
         )
 
     def _run_job(self, cancel_event, target_counts: dict, output_folder: str) -> None:
@@ -407,9 +407,9 @@ class CuratorPanel(ttk.Frame):
             self.after(0, lambda: self.progress.config(maximum=len(final_stems), value=0))
             for idx, stem in enumerate(final_stems, start=1):
                 img_path, label_path = image_files[stem]
-                shutil.copy2(img_path, images_out / img_path.name)
+                shutil.copy2(img_path, images_out / flat_name(stem, img_path.suffix))
                 if label_path is not None:
-                    shutil.copy2(label_path, labels_out / label_path.name)
+                    shutil.copy2(label_path, labels_out / flat_name(stem, '.txt'))
                 if idx % 20 == 0 or idx == len(final_stems):
                     self.after(0, self._update_progress, idx, len(final_stems))
 
@@ -717,7 +717,7 @@ class SplitterPanel(ttk.Frame):
         classes_file = self.classes_file.get()
         self._active_job = self._job_manager.start(
             lambda cancel: self._scan_job(cancel, source_folder, classes_file),
-            ui_call=self.after,
+            ui_call=ui_queue_for(self).call,
         )
 
     def _scan_job(self, cancel_event=None, source_folder=None, classes_file=None) -> None:
@@ -815,7 +815,7 @@ class SplitterPanel(ttk.Frame):
         output_folder = self.output_folder.get()
         self._active_job = self._job_manager.start(
             lambda cancel: self._run_job(cancel, train_p / 100, valid_p / 100, test_p / 100, output_folder),
-            ui_call=self.after,
+            ui_call=ui_queue_for(self).call,
         )
 
     @staticmethod
@@ -934,9 +934,9 @@ class SplitterPanel(ttk.Frame):
                 if cancel_event.is_set():
                     return
                 img_path, label_path = image_files[stem]
-                shutil.copy2(img_path, output / split / "images" / img_path.name)
+                shutil.copy2(img_path, output / split / "images" / flat_name(stem, img_path.suffix))
                 if label_path is not None:
-                    shutil.copy2(label_path, output / split / "labels" / label_path.name)
+                    shutil.copy2(label_path, output / split / "labels" / flat_name(stem, ".txt"))
                 if idx % 20 == 0 or idx == len(assignment):
                     self.after(0, self._update_progress, idx, len(assignment))
 

@@ -7,6 +7,11 @@ from PIL import Image
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 
+def flat_name(key: str, suffix: str = "") -> str:
+    """Flatten a relative dataset key (cam1/frame) into a collision-free file name."""
+    return key.replace("/", "__") + suffix
+
+
 @dataclass
 class DatasetItem:
     key: str

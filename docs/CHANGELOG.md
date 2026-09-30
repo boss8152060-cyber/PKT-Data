@@ -7,6 +7,10 @@
 - `DatasetScanner.scan` no longer crashes on unreadable labels; validates class ids and 0..1 coordinates.
 - Label, class-list, project and data.yaml writes are now atomic; the Curate tab writes `data.yaml` via PyYAML.
 - A failing UI callback is no longer reported as a job error.
+- Curate tab: exported images/labels no longer overwrite files that share a name across sub-folders (shared `flat_name`).
+- Fixed background-job callbacks: `ui_call=self.after` raised TclError, so on_done/on_error never reached the UI. Callbacks now go through a thread-safe `UiQueue` drained on the Tk main thread.
+- `greedy_select` updates diversity incrementally instead of recomputing all similarities; stops when no candidate is relevant.
+- `setup.ps1` verifies the Python installer's Authenticode signature before running it.
 - Added requirements files and tests for the builder, scanner, atomic writes and jobs.
 
 ## 1.19.0

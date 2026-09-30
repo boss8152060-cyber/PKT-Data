@@ -3,11 +3,53 @@
 Jobs never touch Tk widgets directly. UI callbacks can be marshalled back to
 the Tk event loop by passing ``ui_call`` from a widget (usually ``widget.after``).
 """
+import queue
 import threading
 import traceback
 import uuid
 from dataclasses import dataclass, field
 from typing import Callable, Optional, Any
+
+
+class UiQueue:
+    """Marshal callbacks from worker threads onto the Tk main thread.
+
+    Workers call ``call(fn, *args)``; the main thread drains the queue from a
+    periodic ``after`` poll, so no worker ever touches Tk.
+    """
+
+    def __init__(self, widget, interval_ms: int = 50):
+        self._widget = widget
+        self._interval = interval_ms
+        self._queue: "queue.Queue" = queue.Queue()
+        self._poll()
+
+    def call(self, fn: Callable[..., Any], *args) -> None:
+        self._queue.put((fn, args))
+
+    def _poll(self) -> None:
+        try:
+            while True:
+                fn, args = self._queue.get_nowait()
+                try:
+                    fn(*args)
+                except Exception:
+                    traceback.print_exc()
+        except queue.Empty:
+            pass
+        try:
+            self._widget.after(self._interval, self._poll)
+        except Exception:  # widget destroyed
+            pass
+
+
+def ui_queue_for(widget) -> UiQueue:
+    """One shared UiQueue per top-level window."""
+    top = widget.winfo_toplevel()
+    q = getattr(top, "_pk_ui_queue", None)
+    if q is None:
+        q = top._pk_ui_queue = UiQueue(top)
+    return q
 
 
 @dataclass

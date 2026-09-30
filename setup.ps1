@@ -55,6 +55,14 @@ if (-not $python312Found) {
 
     Invoke-WebRequest -Uri $pythonInstallerUrl -OutFile $installerPath
 
+    # Refuse to run the installer unless it carries a valid Python Software Foundation signature
+    $sig = Get-AuthenticodeSignature -FilePath $installerPath
+    if ($sig.Status -ne "Valid" -or $sig.SignerCertificate.Subject -notmatch "Python Software Foundation") {
+        Remove-Item $installerPath -Force -ErrorAction SilentlyContinue
+        Write-Err "Downloaded Python installer failed signature verification. Aborting."
+        exit 1
+    }
+
     # Silent install, add to PATH, include the py launcher
     Start-Process -FilePath $installerPath -ArgumentList "/quiet", "InstallAllUsers=0", "PrependPath=1", "Include_launcher=1" -Wait
 

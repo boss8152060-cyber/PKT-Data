@@ -92,37 +92,39 @@ def greedy_select(
     remaining = dict(quotas)
     pool = list(dict.fromkeys(candidates))
     selected: List[str] = []
-    selected_vectors: List[Sequence[float]] = []
+
+    # Unit vectors, and each candidate's best similarity to anything selected so
+    # far, updated incrementally (O(pool) per pick instead of O(pool * selected)).
+    unit = {s: _unit(embeddings[s]) for s in pool if embeddings and s in embeddings}
+    max_sim: Dict[str, float] = {}
 
     while pool and any(v > 0 for v in remaining.values()):
         best_stem = None
         best_score = float("-inf")
-        best_div = 1.0
         for stem in pool:
-            div = _diversity(stem, embeddings, selected_vectors)
+            div = 1.0 - max_sim[stem] if stem in max_sim else 1.0
             score = selection_score(stem, image_labels, remaining, difficulty, div, rarity, weights)
             if score > best_score or (score == best_score and (best_stem is None or stem.casefold() < best_stem.casefold())):
-                best_score, best_stem, best_div = score, stem, div
-        if best_stem is None:
+                best_score, best_stem = score, stem
+        if best_stem is None or best_score == float("-inf"):
             break
         pool.remove(best_stem)
         selected.append(best_stem)
-        if embeddings and best_stem in embeddings:
-            selected_vectors.append(embeddings[best_stem])
+        chosen = unit.get(best_stem)
+        if chosen is not None:
+            for stem in pool:
+                vec = unit.get(stem)
+                if vec is not None:
+                    sim = sum(a * b for a, b in zip(vec, chosen))
+                    if sim > max_sim.get(stem, -1.0):
+                        max_sim[stem] = sim
         for c in set(image_labels.get(best_stem, [])):
             if c in remaining:
                 remaining[c] = max(0, remaining[c] - 1)
     return selected
 
 
-def _diversity(stem, embeddings, selected_vectors) -> float:
-    if not embeddings or stem not in embeddings or not selected_vectors:
-        return 1.0
-    v = embeddings[stem]
-    norm = sum(float(x) * float(x) for x in v) ** 0.5 or 1.0
-    max_sim = -1.0
-    for other in selected_vectors:
-        onorm = sum(float(x) * float(x) for x in other) ** 0.5 or 1.0
-        sim = sum(float(a) * float(b) for a, b in zip(v, other)) / (norm * onorm)
-        max_sim = max(max_sim, sim)
-    return 1.0 - max_sim
+def _unit(vector: Sequence[float]) -> List[float]:
+    values = [float(x) for x in vector]
+    norm = sum(x * x for x in values) ** 0.5 or 1.0
+    return [x / norm for x in values]

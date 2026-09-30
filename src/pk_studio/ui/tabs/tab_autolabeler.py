@@ -34,7 +34,7 @@ from PIL import Image, ImageTk
 from pk_studio.theme import COLORS
 from pk_studio.core.class_registry import ClassRegistry
 from pk_studio.core.fileio import atomic_write_text
-from pk_studio.core.job_manager import JobManager
+from pk_studio.core.job_manager import JobManager, ui_queue_for
 
 DEFAULT_COLORS = [
     # High-saturation, easy-to-distinguish colors for Classes / Bounding Boxes.
@@ -1196,7 +1196,7 @@ class AutoLabelerTab(ttk.Frame):
             self.lbl_file_info.config(text=f"Auto-Label error: {img_name}")
             messagebox.showerror("Auto-Label", f"Processing failed for {img_name}\n\n{job_obj.error}")
 
-        self._auto_job = self.job_manager.start(job, on_done=done, on_error=error, ui_call=self.after)
+        self._auto_job = self.job_manager.start(job, on_done=done, on_error=error, ui_call=ui_queue_for(self).call)
 
     def cancel_auto_label(self) -> None:
         if self._auto_job and self._auto_job.status in {"pending", "running"}:
@@ -1288,7 +1288,7 @@ class AutoLabelerTab(ttk.Frame):
             self._batch_running = False
             messagebox.showerror("Batch Auto-Label", f"Batch failed: {job_obj.error}")
 
-        self._auto_job = self.job_manager.start(job, on_done=finish, on_error=error, ui_call=self.after)
+        self._auto_job = self.job_manager.start(job, on_done=finish, on_error=error, ui_call=ui_queue_for(self).call)
 
     def load_current_image(self):
         if not self.filtered_images:

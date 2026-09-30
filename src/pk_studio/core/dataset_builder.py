@@ -5,7 +5,7 @@ import random
 import shutil
 import yaml
 
-from pk_studio.core.dataset import DatasetScanner
+from pk_studio.core.dataset import DatasetScanner, flat_name
 from pk_studio.core.fileio import atomic_write_text
 
 
@@ -71,11 +71,6 @@ def split_items(items, train=0.7, valid=0.2, test=0.1, seed=0):
     return assigned, warnings
 
 
-def _unique_name(rel_key: str, suffix: str) -> str:
-    """Flatten a relative key (``cam1/frame``) into a collision-free file name."""
-    return rel_key.replace("/", "__") + suffix
-
-
 def build_yolo_dataset(source, output, train=0.7, valid=0.2, test=0.1, seed=0, copy_background=True):
     source = Path(source).resolve()
     output = Path(output).resolve()
@@ -95,7 +90,7 @@ def build_yolo_dataset(source, output, train=0.7, valid=0.2, test=0.1, seed=0, c
         lbl_dir = output / split / "labels"
         img_dir.mkdir(parents=True, exist_ok=True)
         lbl_dir.mkdir(parents=True, exist_ok=True)
-        stem = _unique_name(key, "")
+        stem = flat_name(key)
         shutil.copy2(item.image_path, img_dir / (stem + item.image_path.suffix))
         if item.label_path and item.label_path.exists():
             shutil.copy2(item.label_path, lbl_dir / (stem + ".txt"))
