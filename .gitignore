@@ -8,3 +8,16 @@ __pycache__/
 Thumbs.db
 *.pk_tmp
 .venv/
+
+# Large / sensitive data: keep OUT of git (road users faces/plates, models, datasets)
+*.pt
+*.mp4
+*.avi
+*.mov
+*.zip
+*.jpg
+*.jpeg
+*.png
+dataset/
+Dataset/
+Output/
