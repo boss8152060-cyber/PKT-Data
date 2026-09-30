@@ -44,11 +44,19 @@ class UiQueue:
 
 
 def ui_queue_for(widget) -> UiQueue:
-    """One shared UiQueue per top-level window."""
+    """One shared UiQueue per top-level window.
+
+    The first call must happen on the Tk main thread (tabs do it in __init__);
+    afterwards it is safe from worker threads because it only reads a cache.
+    """
+    cached = getattr(widget, "_pk_ui_queue", None)
+    if cached is not None:
+        return cached
     top = widget.winfo_toplevel()
     q = getattr(top, "_pk_ui_queue", None)
     if q is None:
         q = top._pk_ui_queue = UiQueue(top)
+    widget._pk_ui_queue = q
     return q
 
 

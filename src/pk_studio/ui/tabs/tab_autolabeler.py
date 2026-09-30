@@ -21,6 +21,7 @@ Batch Auto-Label:  label  ( label )
 """
 
 import json
+from pathlib import Path
 import os
 import shutil
 import threading
@@ -34,6 +35,8 @@ from PIL import Image, ImageTk
 from pk_studio.theme import COLORS
 from pk_studio.core.class_registry import ClassRegistry
 from pk_studio.core.fileio import atomic_write_text
+from pk_studio.core.reference_labeler import (build_references, propose, read_gray,
+                                            to_yolo_line)
 from pk_studio.core.job_manager import JobManager, ui_queue_for
 
 DEFAULT_COLORS = [
@@ -78,8 +81,10 @@ class AutoLabelerTab(ttk.Frame):
         self.auto_model = None
         self.conf_threshold = 0.35
         self.imgsz = 640
+        self.ref_threshold = 0.70
         self._batch_running = False
         self.job_manager = JobManager()
+        ui_queue_for(self)  # create on the Tk main thread
         self._auto_job = None
         self._batch_errors = []
 
@@ -1152,11 +1157,58 @@ class AutoLabelerTab(ttk.Frame):
             new_bboxes.append([cls_id, x1, y1, x2, y2])
         return new_bboxes, skipped_classes
 
-    def auto_label_current_image(self) -> None:
-        if self.auto_model is None:
+    def _choose_auto_engine(self):
+        """Return "model", "reference" or None (cancelled).
+
+        With no YOLO model loaded the user can still label from boxes they have
+        already drawn ("reference" mode)."""
+        if self.auto_model is not None:
+            return "model"
+        answer = messagebox.askyesnocancel(
+            "Auto-Label",
+            "No YOLO model is loaded.\n\n"
+            "Yes  = load a YOLO model file\n"
+            "No   = label from boxes you already drew (no model needed)\n"
+            "Cancel = do nothing",
+        )
+        if answer is None:
+            return None
+        if answer:
             self.load_yolo_model()
-            if self.auto_model is None:
-                return
+            return "model" if self.auto_model is not None else None
+        return "reference"
+
+    def _prepare_reference_run(self):
+        """Collect labeled (image, label) pairs and ask for a match threshold.
+
+        Returns (pairs, threshold) or None."""
+        pairs = []
+        for name in self.image_files:
+            lbl = os.path.join(self.lbl_dir, os.path.splitext(name)[0] + ".txt")
+            if os.path.exists(lbl) and os.path.getsize(lbl) > 0:
+                pairs.append((Path(self.img_dir) / name, Path(lbl)))
+        if not pairs:
+            messagebox.showwarning(
+                "No Reference Boxes",
+                "Draw boxes on a few images first (and save them). "
+                "Reference mode learns from images that already have labels.",
+            )
+            return None
+        threshold = simpledialog.askfloat(
+            "Reference match threshold",
+            "Minimum similarity (0.30-0.99).\nHigher = fewer, safer boxes. Lower = more boxes, more mistakes.\n"
+            "Every result should still be reviewed.",
+            initialvalue=self.ref_threshold, minvalue=0.30, maxvalue=0.99, parent=self,
+        )
+        if threshold is None:
+            return None
+        self.ref_threshold = float(threshold)
+        return pairs, self.ref_threshold
+
+    def auto_label_current_image(self) -> None:
+        engine = self._choose_auto_engine()
+        if engine is None:
+            return
         if not self.filtered_images:
             messagebox.showwarning("Dataset Not Open", "Open a dataset folder first.")
             return
@@ -1165,11 +1217,28 @@ class AutoLabelerTab(ttk.Frame):
 
         img_name = self.filtered_images[self.current_idx]
         img_path = os.path.join(self.img_dir, img_name)
+        ref_setup = None
+        if engine == "reference":
+            ref_setup = self._prepare_reference_run()
+            if ref_setup is None:
+                return
         self.lbl_file_info.config(text=f"Auto-Label processing: {img_name}")
 
         def job(cancel_event):
             if cancel_event.is_set():
                 return None
+            if engine == "reference":
+                pairs, threshold = ref_setup
+                refs = build_references(
+                    pairs, valid_class_ids=range(len(self.classes)),
+                    exclude=Path(img_path), cancel=cancel_event,
+                )
+                if not refs:
+                    raise ValueError("No usable reference boxes were found in the other labeled images.")
+                found = propose(read_gray(img_path), refs, threshold=threshold, cancel=cancel_event)
+                if cancel_event.is_set():
+                    return None
+                return [[p.cls_id, p.x1, p.y1, p.x2, p.y2] for p in found], set()
             results = self.auto_model.predict(
                 source=img_path, conf=self.conf_threshold, imgsz=self.imgsz, verbose=False
             )
@@ -1203,10 +1272,9 @@ class AutoLabelerTab(ttk.Frame):
             self._auto_job.cancel()
 
     def run_batch_autolabel(self) -> None:
-        if self.auto_model is None:
-            self.load_yolo_model()
-            if self.auto_model is None:
-                return
+        engine = self._choose_auto_engine()
+        if engine is None:
+            return
         if not self.image_files:
             messagebox.showwarning("Dataset Not Open", "Open a dataset folder before starting Batch Auto-Label.")
             return
@@ -1231,6 +1299,12 @@ class AutoLabelerTab(ttk.Frame):
         ):
             return
 
+        ref_setup = None
+        if engine == "reference":
+            ref_setup = self._prepare_reference_run()
+            if ref_setup is None:
+                return
+
         self._batch_running = True
         self._batch_errors = []
 
@@ -1238,11 +1312,33 @@ class AutoLabelerTab(ttk.Frame):
             done_count = 0
             skipped_classes_all = set()
             total = len(to_process)
+            refs = []
+            if engine == "reference":
+                pairs, ref_threshold = ref_setup
+                ui_queue_for(self).call(lambda: self.lbl_file_info.config(text="Batch Auto-Label: reading reference boxes..."))
+                refs = build_references(pairs, valid_class_ids=range(len(self.classes)), cancel=cancel_event)
+                if not refs:
+                    raise ValueError("No usable reference boxes were found in the labeled images.")
             for idx, img_name in enumerate(to_process, start=1):
                 if cancel_event.is_set():
                     break
                 try:
                     img_path = os.path.join(self.img_dir, img_name)
+                    if engine == "reference":
+                        gray = read_gray(img_path)
+                        if gray is None:
+                            raise ValueError("could not read image")
+                        found = propose(gray, refs, threshold=ref_threshold, cancel=cancel_event)
+                        if cancel_event.is_set():
+                            break
+                        ih, iw = gray.shape
+                        txt_path = os.path.join(self.lbl_dir, os.path.splitext(img_name)[0] + ".txt")
+                        atomic_write_text(txt_path, "\n".join(to_yolo_line(p, iw, ih) for p in found))
+                        done_count += 1
+                        ui_queue_for(self).call(lambda i=idx, t=total: self.lbl_file_info.config(
+                            text=f"Batch Auto-Label (reference): {i}/{t} images..."
+                        ))
+                        continue
                     results = self.auto_model.predict(
                         source=img_path, conf=self.conf_threshold, imgsz=self.imgsz, verbose=False
                     )
@@ -1261,7 +1357,7 @@ class AutoLabelerTab(ttk.Frame):
                     done_count += 1
                 except Exception as exc:
                     self._batch_errors.append({"file": img_name, "error": str(exc)})
-                self.after(0, lambda i=idx, t=total: self.lbl_file_info.config(
+                ui_queue_for(self).call(lambda i=idx, t=total: self.lbl_file_info.config(
                     text=f"Batch Auto-Label: {i}/{t} images..."
                 ))
             return done_count, skipped_classes_all, len(to_process)

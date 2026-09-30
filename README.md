@@ -61,3 +61,7 @@ Double-click `run_app.bat`, or run `python main.py`.
 pip install -r requirements.txt -r requirements-dev.txt
 python -m pytest
 ```
+
+## Auto-Label without a model
+
+Click Auto-Label or Batch with no YOLO model loaded and choose **No**. PK Studio then crops the boxes you already drew and searches new images for similar regions. Best for fixed cameras and similar-looking objects; always review the results.

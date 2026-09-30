@@ -58,6 +58,7 @@ class CuratorPanel(ttk.Frame):
         self._scan_result = None
         self._target_vars = {}
         self._job_manager = JobManager()
+        ui_queue_for(self)  # create on the Tk main thread
         self._active_job = None
 
         self._build_ui()
@@ -215,7 +216,7 @@ class CuratorPanel(ttk.Frame):
                 "current_image_count": current_image_count,
             }
 
-            self.after(0, self._build_class_rows, class_names, current_image_count, len(image_files))
+            ui_queue_for(self).call(self._build_class_rows, class_names, current_image_count, len(image_files))
 
         except Exception as exc:
             self._show_error(f"Scan failed: {exc}")
@@ -315,13 +316,13 @@ class CuratorPanel(ttk.Frame):
                 return
             if candidate_pool_stems and any(v > 0 for v in remaining_quota.values()):
                 # ----  embedding () — batch  + auto-retry  OOM ----
-                self.after(0, lambda: self.status_label.config(
+                ui_queue_for(self).call(lambda: self.status_label.config(
                     text=f"Computing embeddings for {len(candidate_pool_stems)} images..."
                 ))
                 candidate_paths = [str(image_files[s][0]) for s in candidate_pool_stems]
 
                 def embed_progress(done, total):
-                    self.after(0, lambda: self.status_label.config(
+                    ui_queue_for(self).call(lambda: self.status_label.config(
                         text=f"Computing embeddings {done}/{total}..."
                     ))
 
@@ -334,13 +335,13 @@ class CuratorPanel(ttk.Frame):
                     embeddings_map[stem] = emb / (emb.norm() + 1e-8)
 
                 # ----  difficulty ( predict  label ) ----
-                self.after(0, lambda: self.status_label.config(
+                ui_queue_for(self).call(lambda: self.status_label.config(
                     text="Computing difficulty (prediction vs. ground truth)..."
                 ))
                 difficulty_map = self._compute_difficulty(model, class_names, candidate_pool_stems, image_files)
 
                 # ---- greedy selection ----
-                self.after(0, lambda: self.status_label.config(text="Selecting images..."))
+                ui_queue_for(self).call(lambda: self.status_label.config(text="Selecting images..."))
                 remaining = dict(remaining_quota)
                 pool = list(candidate_pool_stems)
                 selected_embeds = []
@@ -397,21 +398,21 @@ class CuratorPanel(ttk.Frame):
             final_stems = must_keep_stems | set(selected_stems)
 
             # ----  ----
-            self.after(0, lambda: self.status_label.config(text="Copying files..."))
+            ui_queue_for(self).call(lambda: self.status_label.config(text="Copying files..."))
             output = Path(output_folder)
             images_out = output / "images"
             labels_out = output / "labels"
             images_out.mkdir(parents=True, exist_ok=True)
             labels_out.mkdir(parents=True, exist_ok=True)
 
-            self.after(0, lambda: self.progress.config(maximum=len(final_stems), value=0))
+            ui_queue_for(self).call(lambda: self.progress.config(maximum=len(final_stems), value=0))
             for idx, stem in enumerate(final_stems, start=1):
                 img_path, label_path = image_files[stem]
                 shutil.copy2(img_path, images_out / flat_name(stem, img_path.suffix))
                 if label_path is not None:
                     shutil.copy2(label_path, labels_out / flat_name(stem, '.txt'))
                 if idx % 20 == 0 or idx == len(final_stems):
-                    self.after(0, self._update_progress, idx, len(final_stems))
+                    ui_queue_for(self).call(self._update_progress, idx, len(final_stems))
 
             final_image_count = {c: sum(1 for s in final_stems if c in image_labels[s]) for c in class_names}
             summary_lines = [f"Complete! Original images {len(image_labels)} -> selected images {len(final_stems)}", ""]
@@ -424,10 +425,10 @@ class CuratorPanel(ttk.Frame):
             summary_lines.append(f"Output: {output.resolve()}")
             summary = "\n".join(summary_lines)
 
-            self.after(0, lambda: self.status_label.config(text=summary))
-            self.after(0, lambda: self.run_button.config(state="normal"))
-            self.after(0, lambda: self.scan_button.config(state="normal"))
-            self.after(0, lambda: self.cancel_button.config(state="disabled"))
+            ui_queue_for(self).call(lambda: self.status_label.config(text=summary))
+            ui_queue_for(self).call(lambda: self.run_button.config(state="normal"))
+            ui_queue_for(self).call(lambda: self.scan_button.config(state="normal"))
+            ui_queue_for(self).call(lambda: self.cancel_button.config(state="disabled"))
 
         except Exception as exc:
             self._show_error(f"Unexpected error: {exc}")
@@ -561,13 +562,13 @@ class CuratorPanel(ttk.Frame):
         self.status_label.config(text=f"Copying files {current}/{total}...")
 
     def _log(self, message: str) -> None:
-        self.after(0, lambda: self.status_label.config(text=message))
+        ui_queue_for(self).call(lambda: self.status_label.config(text=message))
 
     def _show_error(self, message: str) -> None:
-        self.after(0, lambda: messagebox.showerror("Error", message))
-        self.after(0, lambda: self.run_button.config(state="normal"))
-        self.after(0, lambda: self.scan_button.config(state="normal"))
-        self.after(0, lambda: self.cancel_button.config(state="disabled"))
+        ui_queue_for(self).call(lambda: messagebox.showerror("Error", message))
+        ui_queue_for(self).call(lambda: self.run_button.config(state="normal"))
+        ui_queue_for(self).call(lambda: self.scan_button.config(state="normal"))
+        ui_queue_for(self).call(lambda: self.cancel_button.config(state="disabled"))
 
     def _cancel_job(self) -> None:
         if self._active_job and self._active_job.status in {"pending", "running", "cancelling"}:
@@ -588,6 +589,7 @@ class SplitterPanel(ttk.Frame):
 
         self._scan_result = None
         self._job_manager = JobManager()
+        ui_queue_for(self)  # create on the Tk main thread
         self._active_job = None
 
         self._build_ui()
@@ -761,7 +763,7 @@ class SplitterPanel(ttk.Frame):
                 "n_background": n_background,
             }
 
-            self.after(0, self._show_scan_summary, class_names, current_count, n_background, len(image_files))
+            ui_queue_for(self).call(self._show_scan_summary, class_names, current_count, n_background, len(image_files))
 
         except Exception as exc:
             self._show_error(f"Scan failed: {exc}")
@@ -929,7 +931,7 @@ class SplitterPanel(ttk.Frame):
                 (output / split / "images").mkdir(parents=True, exist_ok=True)
                 (output / split / "labels").mkdir(parents=True, exist_ok=True)
 
-            self.after(0, lambda: self.progress.config(maximum=len(assignment), value=0))
+            ui_queue_for(self).call(lambda: self.progress.config(maximum=len(assignment), value=0))
             for idx, (stem, split) in enumerate(assignment.items(), start=1):
                 if cancel_event.is_set():
                     return
@@ -938,7 +940,7 @@ class SplitterPanel(ttk.Frame):
                 if label_path is not None:
                     shutil.copy2(label_path, output / split / "labels" / flat_name(stem, ".txt"))
                 if idx % 20 == 0 or idx == len(assignment):
-                    self.after(0, self._update_progress, idx, len(assignment))
+                    ui_queue_for(self).call(self._update_progress, idx, len(assignment))
 
             #  
             split_counts = {"train": 0, "valid": 0, "test": 0}
@@ -964,10 +966,10 @@ class SplitterPanel(ttk.Frame):
             summary_lines.append(f"Output: {output.resolve()}")
             summary = "\n".join(summary_lines)
 
-            self.after(0, lambda: self.status_label.config(text=summary))
-            self.after(0, lambda: self.run_button.config(state="normal"))
-            self.after(0, lambda: self.scan_button.config(state="normal"))
-            self.after(0, lambda: self.cancel_button.config(state="disabled"))
+            ui_queue_for(self).call(lambda: self.status_label.config(text=summary))
+            ui_queue_for(self).call(lambda: self.run_button.config(state="normal"))
+            ui_queue_for(self).call(lambda: self.scan_button.config(state="normal"))
+            ui_queue_for(self).call(lambda: self.cancel_button.config(state="disabled"))
 
         except Exception as exc:
             self._show_error(f"Unexpected error: {exc}")
@@ -977,9 +979,9 @@ class SplitterPanel(ttk.Frame):
         self.status_label.config(text=f"Copying files {current}/{total}...")
 
     def _show_error(self, message: str) -> None:
-        self.after(0, lambda: messagebox.showerror("Error", message))
-        self.after(0, lambda: self.run_button.config(state="normal"))
-        self.after(0, lambda: self.scan_button.config(state="normal"))
+        ui_queue_for(self).call(lambda: messagebox.showerror("Error", message))
+        ui_queue_for(self).call(lambda: self.run_button.config(state="normal"))
+        ui_queue_for(self).call(lambda: self.scan_button.config(state="normal"))
 
     def _cancel_job(self) -> None:
         if self._active_job and self._active_job.status in {"pending", "running", "cancelling"}:
